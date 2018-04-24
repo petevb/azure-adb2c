@@ -24,10 +24,19 @@ namespace WebApp_OpenIDConnect_DotNet.Controllers
         [HttpGet]
         public IActionResult SignIn()
         {
+            Console.WriteLine($"SessionController.SignIn()");
+
+            const string PolicyAuthenticationProperty = "Policy";
             var redirectUrl = Url.Action(nameof(HomeController.Index), "Home");
-            return Challenge(
-                new AuthenticationProperties { RedirectUri = redirectUrl },
+            var properties = new AuthenticationProperties { RedirectUri = redirectUrl };
+            properties.Items[PolicyAuthenticationProperty] = this.AzureAdB2COptions.SignInPolicyId;
+            return this.Challenge(
+                properties, 
                 OpenIdConnectDefaults.AuthenticationScheme);
+
+            // return Challenge(
+            //     new AuthenticationProperties { RedirectUri = redirectUrl },
+            //     OpenIdConnectDefaults.AuthenticationScheme);
         }
 
         [HttpGet]
@@ -48,17 +57,21 @@ namespace WebApp_OpenIDConnect_DotNet.Controllers
             return Challenge(properties, OpenIdConnectDefaults.AuthenticationScheme);
         }
 
-        [HttpGet]
         public IActionResult SignOut()
         {
-            var callbackUrl = Url.Action(nameof(SignedOut), "Session", values: null, protocol: Request.Scheme);
-            return SignOut(new AuthenticationProperties { RedirectUri = callbackUrl },
-                CookieAuthenticationDefaults.AuthenticationScheme, OpenIdConnectDefaults.AuthenticationScheme);
+            Console.WriteLine($"SessionController.SignOut()");
+
+            return this.SignOut(
+                new AuthenticationProperties { RedirectUri = this.Url.Action("Index", "Home") },
+                CookieAuthenticationDefaults.AuthenticationScheme,
+                OpenIdConnectDefaults.AuthenticationScheme);
         }
 
         [HttpGet]
         public IActionResult SignedOut()
         {
+            Console.WriteLine($"SessionController.SignedOut()");
+
             if (User.Identity.IsAuthenticated)
             {
                 // Redirect to home page if the user is authenticated.

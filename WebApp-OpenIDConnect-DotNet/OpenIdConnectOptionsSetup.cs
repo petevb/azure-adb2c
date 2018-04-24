@@ -9,9 +9,9 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Identity.Client;
-using WebApp_OpenIDConnect_DotNet.Models;
 using System.Security.Claims;
 using Microsoft.Extensions.DependencyInjection;
+using System.Diagnostics;
 
 namespace WebApp_OpenIDConnect_DotNet
 {
@@ -46,13 +46,40 @@ namespace WebApp_OpenIDConnect_DotNet
                 options.Authority = AzureAdB2COptions.Authority;
                 options.UseTokenLifetime = true;
                 options.TokenValidationParameters = new TokenValidationParameters() { NameClaimType = "name" };
-
                 options.Events = new OpenIdConnectEvents()
                 {
+                    OnTokenValidated = r =>
+                        {
+                            Console.WriteLine($"    OnTokenValidated: {r.Principal.Identity.Name}");
+                            return Task.FromResult(0);
+                        },
+
                     OnRedirectToIdentityProvider = OnRedirectToIdentityProvider,
+                    OnRedirectToIdentityProviderForSignOut = OnRedirectToIdentityProviderForSignOut,
+                    OnRemoteSignOut = OnRemoteSignOut,
                     OnRemoteFailure = OnRemoteFailure,
-                    OnAuthorizationCodeReceived = OnAuthorizationCodeReceived
+                    OnAuthorizationCodeReceived = OnAuthorizationCodeReceived,
+                    OnTicketReceived = OnTicketReceived
                 };
+            }
+
+            private Task OnRedirectToIdentityProviderForSignOut(RedirectContext redirectContext)
+            {
+                Console.WriteLine($"    OnRedirectToIdentityProviderForSignOut: {redirectContext.ProtocolMessage.Display}");
+
+                if (redirectContext.ProtocolMessage.RequestType == OpenIdConnectRequestType.Logout)
+                {
+                    var idTokenHint = redirectContext.Request.HttpContext.User.FindFirst("id_token");
+                    if (idTokenHint != null)
+                        redirectContext.ProtocolMessage.IdTokenHint = idTokenHint.Value;
+                }
+                return Task.FromResult(0);
+            }
+
+            private Task OnRemoteSignOut(RemoteSignOutContext arg)
+            {
+                Console.WriteLine($"    OnRemoteSignOut: {arg.Principal.Identity.Name}");
+                return Task.CompletedTask;
             }
 
             public void Configure(OpenIdConnectOptions options)
@@ -60,15 +87,39 @@ namespace WebApp_OpenIDConnect_DotNet
                 Configure(Options.DefaultName, options);
             }
 
+            /// <summary>
+            /// See https://login.microsoftonline.com/NOLttcUATb2c.onmicrosoft.com/v2.0/.well-known/openid-configuration?p=b2c_1_sign_in
+            /// for out AD B2C configuration.
+            /// 
+            /// Perhaps we should hit, 
+            /// <code>
+            /// end_session_endpoint: "https://login.microsoftonline.com/nolttcuatb2c.onmicrosoft.com/oauth2/v2.0/logout?p=b2c_1_sign_in"
+            /// </code>
+            /// instead of:
+            /// <code>authorization_endpoint: "https://login.microsoftonline.com/nolttcuatb2c.onmicrosoft.com/oauth2/v2.0/authorize?p=b2c_1_sign_in"</code>
+            /// ?
+            /// Also, possibly need a code block that checks if it's a logout:
+            /// <code>
+            /// if (n.ProtocolMessage.RequestType == OpenIdConnectRequestType.LogoutRequest)
+            /// {
+            ///     // hit this, context.ProtocolMessage.IssuerAddress = AzureAdB2COptions.EndSessionEndpoint;
+            ///     // having built this `logout?p=b2c_1_sign_in` bit via config.
+            /// }
+            /// </code>
+            /// </summary>
             public Task OnRedirectToIdentityProvider(RedirectContext context)
             {
+                Console.WriteLine($"    OnRedirectToIdentityProvider: {context.ProtocolMessage.UserId}");
+
                 var defaultPolicy = AzureAdB2COptions.DefaultPolicy;
-                if (context.Properties.Items.TryGetValue(AzureAdB2COptions.PolicyAuthenticationProperty, out var policy) &&
-                    !policy.Equals(defaultPolicy))
+                if (context.Properties.Items.TryGetValue(
+                        AzureAdB2COptions.PolicyAuthenticationProperty,
+                        out var policy) && !policy.Equals(defaultPolicy))
                 {
                     context.ProtocolMessage.Scope = OpenIdConnectScope.OpenIdProfile;
                     context.ProtocolMessage.ResponseType = OpenIdConnectResponseType.IdToken;
-                    context.ProtocolMessage.IssuerAddress = context.ProtocolMessage.IssuerAddress.ToLower().Replace(defaultPolicy.ToLower(), policy.ToLower());
+                    context.ProtocolMessage.IssuerAddress = context.ProtocolMessage.IssuerAddress.ToLower()
+                        .Replace(defaultPolicy.ToLower(), policy.ToLower());
                     context.Properties.Items.Remove(AzureAdB2COptions.PolicyAuthenticationProperty);
                 }
                 else if (!string.IsNullOrEmpty(AzureAdB2COptions.ApiUrl))
@@ -76,6 +127,7 @@ namespace WebApp_OpenIDConnect_DotNet
                     context.ProtocolMessage.Scope += $" offline_access {AzureAdB2COptions.ApiScopes}";
                     context.ProtocolMessage.ResponseType = OpenIdConnectResponseType.CodeIdToken;
                 }
+
                 return Task.FromResult(0);
             }
 
@@ -100,27 +152,22 @@ namespace WebApp_OpenIDConnect_DotNet
                 return Task.FromResult(0);
             }
 
-            public async Task OnAuthorizationCodeReceived(AuthorizationCodeReceivedContext context)
+            public Task OnAuthorizationCodeReceived(AuthorizationCodeReceivedContext context)
             {
+                Console.WriteLine($"    OnAuthorizationCodeReceived: {context.Principal.Identity.Name}");
+
                 // Use MSAL to swap the code for an access token
                 // Extract the code from the response notification
                 var code = context.ProtocolMessage.Code;
-
                 string signedInUserID = context.Principal.FindFirst(ClaimTypes.NameIdentifier).Value;
-                TokenCache userTokenCache = new MSALSessionCache(signedInUserID, context.HttpContext).GetMsalCacheInstance();
-                ConfidentialClientApplication cca = new ConfidentialClientApplication(AzureAdB2COptions.ClientId, AzureAdB2COptions.Authority, AzureAdB2COptions.RedirectUri, new ClientCredential(AzureAdB2COptions.ClientSecret), userTokenCache, null);
-                try
-                {
-                    AuthenticationResult result = await cca.AcquireTokenByAuthorizationCodeAsync(code, AzureAdB2COptions.ApiScopes.Split(' '));
+                Console.WriteLine($"    Auth code received: {signedInUserID}");
+                return Task.CompletedTask;
+            }
 
-
-                    context.HandleCodeRedemption(result.AccessToken, result.IdToken);
-                }
-                catch (Exception ex)
-                {
-                    //TODO: Handle
-                    throw;
-                }
+            private Task OnTicketReceived(TicketReceivedContext r)
+            {
+                Console.WriteLine($"    OnTicketReceived: {r.Principal.Identity.Name}");
+                return Task.CompletedTask;
             }
         }
     }

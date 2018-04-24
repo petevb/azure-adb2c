@@ -23,6 +23,12 @@ namespace WebApp_OpenIDConnect_DotNet
                 .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
                 .AddJsonFile($"appsettings.{env.EnvironmentName}.json", optional: true)
                 .AddEnvironmentVariables();
+
+            if (env.IsDevelopment())
+            {
+                builder.AddUserSecrets<Startup>(false);
+            }
+
             Configuration = builder.Build();
         }
 
@@ -43,16 +49,16 @@ namespace WebApp_OpenIDConnect_DotNet
 
             // Add framework services.
             services.AddMvc();
-            
+
             // Adds a default in-memory implementation of IDistributedCache.
             services.AddDistributedMemoryCache();
-            services.AddSession(options =>
-            {
-                options.IdleTimeout = TimeSpan.FromHours(1);
-                options.CookieHttpOnly = true;
-            });
+            // services.AddSession(options =>
+            // {
+            //     options.IdleTimeout = TimeSpan.FromHours(1);
+            //     options.CookieHttpOnly = true;
+            // });
 
-            
+
         }
 
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
@@ -72,8 +78,8 @@ namespace WebApp_OpenIDConnect_DotNet
             }
 
             app.UseStaticFiles();
-            
-            app.UseSession();
+
+            ////app.UseSession();
 
             app.UseAuthentication();
 
